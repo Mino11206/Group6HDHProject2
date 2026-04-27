@@ -416,7 +416,50 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  // === Phần 3: Doubly-indirect blocks (bn = 0..65535) ===
+  if(bn < NINDIRECT * NINDIRECT){
+    // --- Bước 3a: Load doubly-indirect block ---
+    // addrs[NDIRECT+1] là slot dành cho doubly-indirect block 
+    if((addr = ip->addrs[NDIRECT+1]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      ip->addrs[NDIRECT+1] = addr;
+    }
+    
+    // Đọc doubly-indirect block vào bộ nhớ
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
 
+    // --- Bước 3b: Tìm singly-indirect block bên trong ---
+    // bn / NINDIRECT xác định chúng ta cần indirect block thứ mấy 
+    uint indirect_idx = bn / NINDIRECT;
+    if((addr = a[indirect_idx]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0){
+        brelse(bp);
+        return 0;
+      }
+      a[indirect_idx] = addr;
+      log_write(bp); // Đánh dấu block này đã thay đổi 
+    }
+    brelse(bp); // Giải phóng doubly-indirect block sau khi lấy được địa chỉ con 
+
+    // --- Bước 3c: Load singly-indirect block và tìm data block ---
+    // bn % NINDIRECT xác định index của data block trong indirect block đó 
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    uint data_idx = bn % NINDIRECT;
+    if((addr = a[data_idx]) == 0){
+      addr = balloc(ip->dev);
+      if(addr){
+        a[data_idx] = addr;
+        log_write(bp);
+      }
+    }
+    brelse(bp); // Giải phóng singly-indirect block 
+    return addr;
+  }
   panic("bmap: out of range");
 }
 
