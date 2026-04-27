@@ -416,6 +416,7 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
   // === Phần 3: Doubly-indirect blocks (bn = 0..65535) ===
   if(bn < NINDIRECT * NINDIRECT){
     // --- Bước 3a: Load doubly-indirect block ---
