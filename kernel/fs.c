@@ -469,8 +469,8 @@ void
 itrunc(struct inode *ip)
 {
   int i, j;
-  struct buf *bp;
-  uint *a;
+  struct buf *bp, *bp2;
+  uint *a, *a2;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
