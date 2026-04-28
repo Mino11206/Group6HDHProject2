@@ -1,0 +1,140 @@
+diff --git a/kernel/file.h b/kernel/file.h
+index b076d1d..5c4eb3a 100644
+--- a/kernel/file.h
++++ b/kernel/file.h
+@@ -26,7 +26,7 @@ struct inode {
+   short minor;
+   short nlink;
+   uint size;
+-  uint addrs[NDIRECT+1];
++  uint addrs[NDIRECT+2];
+ };
+ 
+ // map major device number to device functions.
+diff --git a/kernel/fs.c b/kernel/fs.c
+index c6bab15..67b11e6 100644
+--- a/kernel/fs.c
++++ b/kernel/fs.c
+@@ -416,7 +416,51 @@ bmap(struct inode *ip, uint bn)
+     brelse(bp);
+     return addr;
+   }
++  bn -= NINDIRECT;
++  // === Phần 3: Doubly-indirect blocks (bn = 0..65535) ===
++  if(bn < NINDIRECT * NINDIRECT){
++    // --- Bước 3a: Load doubly-indirect block ---
++    // addrs[NDIRECT+1] là slot dành cho doubly-indirect block 
++    if((addr = ip->addrs[NDIRECT+1]) == 0){
++      addr = balloc(ip->dev);
++      if(addr == 0)
++        return 0;
++      ip->addrs[NDIRECT+1] = addr;
++    }
++    
++    // Đọc doubly-indirect block vào bộ nhớ
++    bp = bread(ip->dev, addr);
++    a = (uint*)bp->data;
++
++    // --- Bước 3b: Tìm singly-indirect block bên trong ---
++    // bn / NINDIRECT xác định chúng ta cần indirect block thứ mấy 
++    uint indirect_idx = bn / NINDIRECT;
++    if((addr = a[indirect_idx]) == 0){
++      addr = balloc(ip->dev);
++      if(addr == 0){
++        brelse(bp);
++        return 0;
++      }
++      a[indirect_idx] = addr;
++      log_write(bp); // Đánh dấu block này đã thay đổi 
++    }
++    brelse(bp); // Giải phóng doubly-indirect block sau khi lấy được địa chỉ con 
+ 
++    // --- Bước 3c: Load singly-indirect block và tìm data block ---
++    // bn % NINDIRECT xác định index của data block trong indirect block đó 
++    bp = bread(ip->dev, addr);
++    a = (uint*)bp->data;
++    uint data_idx = bn % NINDIRECT;
++    if((addr = a[data_idx]) == 0){
++      addr = balloc(ip->dev);
++      if(addr){
++        a[data_idx] = addr;
++        log_write(bp);
++      }
++    }
++    brelse(bp); // Giải phóng singly-indirect block 
++    return addr;
++  }
+   panic("bmap: out of range");
+ }
+ 
+@@ -426,8 +470,8 @@ void
+ itrunc(struct inode *ip)
+ {
+   int i, j;
+-  struct buf *bp;
+-  uint *a;
++  struct buf *bp, *bp2;
++  uint *a, *a2;
+ 
+   for(i = 0; i < NDIRECT; i++){
+     if(ip->addrs[i]){
+@@ -447,7 +491,34 @@ itrunc(struct inode *ip)
+     bfree(ip->dev, ip->addrs[NDIRECT]);
+     ip->addrs[NDIRECT] = 0;
+   }
++  // === Giải phóng doubly-indirect blocks ===
++  if(ip->addrs[NDIRECT+1]){
++    // 1. Đọc doubly-indirect block (Tầng 1)
++    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
++    a = (uint*)bp->data;
++
++    for(i = 0; i < NINDIRECT; i++){
++      if(a[i]){
++        // 2. Đọc từng singly-indirect block con (Tầng 2)
++        bp2 = bread(ip->dev, a[i]);
++        a2 = (uint*)bp2->data;
++
++        for(j = 0; j < NINDIRECT; j++){
++          if(a2[j]){
++            // 3. Giải phóng data blocks (Tầng 3)
++            bfree(ip->dev, a2[j]);
++          }
++        }
++        
++        brelse(bp2);           // Giải phóng buffer của tầng 2
++        bfree(ip->dev, a[i]);  // Giải phóng chính khối singly-indirect đó
++      }
++    }
+ 
++    brelse(bp);                          // Giải phóng buffer của tầng 1
++    bfree(ip->dev, ip->addrs[NDIRECT+1]); // Giải phóng khối doubly-indirect
++    ip->addrs[NDIRECT+1] = 0;
++  }
+   ip->size = 0;
+   iupdate(ip);
+ }
+diff --git a/kernel/fs.h b/kernel/fs.h
+index 139dcc9..78c109d 100644
+--- a/kernel/fs.h
++++ b/kernel/fs.h
+@@ -24,9 +24,9 @@ struct superblock {
+ 
+ #define FSMAGIC 0x10203040
+ 
+-#define NDIRECT 12
++#define NDIRECT 11
+ #define NINDIRECT (BSIZE / sizeof(uint))
+-#define MAXFILE (NDIRECT + NINDIRECT)
++#define MAXFILE (NDIRECT + NINDIRECT + NINDIRECT * NINDIRECT)
+ 
+ // On-disk inode structure
+ struct dinode {
+@@ -35,7 +35,7 @@ struct dinode {
+   short minor;          // Minor device number (T_DEVICE only)
+   short nlink;          // Number of links to inode in file system
+   uint size;            // Size of file (bytes)
+-  uint addrs[NDIRECT+1];   // Data block addresses
++  uint addrs[NDIRECT+2];   // Data block addresses
+ };
+ 
+ // Inodes per block.
