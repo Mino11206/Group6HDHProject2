@@ -3,7 +3,7 @@
 #include "kernel/fcntl.h"
 #ifdef LAB_PGTBL
 #include "kernel/riscv.h"
-#include "kernel/memlayout.h"
+#include "kernel/memlayout.h" 
 #endif
 #include "user/user.h"
 
@@ -152,6 +152,9 @@ memcpy(void *dst, const void *src, uint n)
 }
 
 #ifdef LAB_PGTBL
+struct usyscall {
+  int pid;
+};
 int
 ugetpid(void)
 {
